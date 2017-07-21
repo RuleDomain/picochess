@@ -23,8 +23,8 @@ from threading import Lock, Timer
 
 
 class DgtPi(DgtIface):
-    def __init__(self, dgtserial, dgttranslate):
-        super(DgtPi, self).__init__(dgtserial, dgttranslate)
+    def __init__(self, dgttranslate):
+        super(DgtPi, self).__init__(dgttranslate)
 
         self.lib_lock = Lock()
         self.lib = cdll.LoadLibrary('dgt/dgtpicom.so')
@@ -32,7 +32,6 @@ class DgtPi(DgtIface):
         self._startup_i2c_clock()
         incoming_clock_thread = Timer(0, self._process_incoming_clock_forever)
         incoming_clock_thread.start()
-        # self.dgtserial.run()
 
     def _startup_i2c_clock(self):
         while self.lib.dgtpicom_init() < 0:
@@ -42,7 +41,7 @@ class DgtPi(DgtIface):
         if self.lib.dgtpicom_configure() < 0:
             logging.warning('Configure failed - Jack connected back?')
             DisplayMsg.show(Message.JACK_CONNECTED_ERROR())
-        DisplayMsg.show(Message.DGT_CLOCK_VERSION(main=2, sub=2, attached="i2c"))
+        DisplayMsg.show(Message.DGT_CLOCK_VERSION(main=2, sub=2, attached='i2c', text=None))
 
     def _process_incoming_clock_forever(self):
         but = c_byte(0)
@@ -57,32 +56,32 @@ class DgtPi(DgtIface):
                 if res > 0:
                     ack3 = but.value
                     if ack3 == 0x01:
-                        logging.info('DGT clock [i2c]: button 0 pressed')
+                        logging.info('(i2c) clock: button 0 pressed')
                         DisplayMsg.show(Message.DGT_BUTTON(button=0))
                     if ack3 == 0x02:
-                        logging.info('DGT clock [i2c]: button 1 pressed')
+                        logging.info('(i2c) clock: button 1 pressed')
                         DisplayMsg.show(Message.DGT_BUTTON(button=1))
                     if ack3 == 0x04:
-                        logging.info('DGT clock [i2c]: button 2 pressed')
+                        logging.info('(i2c) clock: button 2 pressed')
                         DisplayMsg.show(Message.DGT_BUTTON(button=2))
                     if ack3 == 0x08:
-                        logging.info('DGT clock [i2c]: button 3 pressed')
+                        logging.info('(i2c) clock: button 3 pressed')
                         DisplayMsg.show(Message.DGT_BUTTON(button=3))
                     if ack3 == 0x10:
-                        logging.info('DGT clock [i2c]: button 4 pressed')
+                        logging.info('(i2c) clock: button 4 pressed')
                         DisplayMsg.show(Message.DGT_BUTTON(button=4))
                     if ack3 == 0x20:
-                        logging.info('DGT clock [i2c]: button on/off pressed')
+                        logging.info('(i2c) clock: button on/off pressed')
                         self.lib.dgtpicom_configure()  # restart the clock - cause its OFF
                         DisplayMsg.show(Message.DGT_BUTTON(button=0x11))
                     if ack3 == 0x11:
-                        logging.info('DGT clock [i2c]: button 0+4 pressed')
+                        logging.info('(i2c) clock: button 0+4 pressed')
                         DisplayMsg.show(Message.DGT_BUTTON(button=0x11))
                     if ack3 == 0x40:
-                        logging.info('DGT clock [i2c]: lever pressed > right side down')
+                        logging.info('(i2c) clock: lever pressed > right side down')
                         DisplayMsg.show(Message.DGT_BUTTON(button=0x40))
                     if ack3 == -0x40:
-                        logging.info('DGT clock [i2c]: lever pressed > left side down')
+                        logging.info('(i2c) clock: lever pressed > left side down')
                         DisplayMsg.show(Message.DGT_BUTTON(button=-0x40))
                 if res < 0:
                     logging.warning('GetButtonMessage returned error %i', res)
@@ -96,32 +95,32 @@ class DgtPi(DgtIface):
                 DisplayMsg.show(Message.DGT_CLOCK_TIME(time_left=times[:3], time_right=times[3:]))
             time.sleep(0.1)
 
-    def _display_on_dgt_pi(self, text, beep=False, left_dots=ClockDots.NONE, right_dots=ClockDots.NONE):
+    def _display_on_dgt_pi(self, text, beep=False, left_icons=ClockIcons.NONE, right_icons=ClockIcons.NONE):
         if len(text) > 11:
-            logging.warning('DGT PI clock message too long [%s]', text)
+            logging.warning('(i2c) clock message too long [%s]', text)
         logging.debug(text)
         text = bytes(text, 'utf-8')
         with self.lib_lock:
-            res = self.lib.dgtpicom_set_text(text, 0x03 if beep else 0x00, left_dots.value, right_dots.value)
+            res = self.lib.dgtpicom_set_text(text, 0x03 if beep else 0x00, left_icons.value, right_icons.value)
             if res < 0:
                 logging.warning('SetText returned error %i', res)
                 res = self.lib.dgtpicom_configure()
                 if res < 0:
                     logging.warning('Configure also failed %i', res)
                 else:
-                    res = self.lib.dgtpicom_set_text(text, 0x03 if beep else 0x00, left_dots.value, right_dots.value)
+                    res = self.lib.dgtpicom_set_text(text, 0x03 if beep else 0x00, left_icons.value, right_icons.value)
             if res < 0:
                 logging.warning('Finally failed %i', res)
 
     def display_text_on_clock(self, message):
-        if 'i2c' not in message.devs:
-            return
         text = message.l
         if text is None:
             text = message.m
-        left_dots = message.ld if hasattr(message, 'ld') else ClockDots.NONE
-        right_dots = message.rd if hasattr(message, 'rd') else ClockDots.NONE
-        self._display_on_dgt_pi(text, message.beep, left_dots, right_dots)
+        if 'i2c' not in message.devs:
+            logging.debug('ignored message cause of devs [{}]'.format(text))
+        left_icons = message.ld if hasattr(message, 'ld') else ClockIcons.NONE
+        right_icons = message.rd if hasattr(message, 'rd') else ClockIcons.NONE
+        self._display_on_dgt_pi(text, message.beep, left_icons, right_icons)
 
     def display_move_on_clock(self, message):
         bit_board = Board(message.fen)
@@ -130,9 +129,9 @@ class DgtPi(DgtIface):
             move_text = move_text.rjust(8)
         text = self.dgttranslate.move(move_text)
         text = '{:3d}{:s}'.format(bit_board.fullmove_number, text)
-        left_dots = message.ld if hasattr(message, 'ld') else ClockDots.DOT
-        right_dots = message.rd if hasattr(message, 'rd') else ClockDots.NONE
-        self._display_on_dgt_pi(text, message.beep, left_dots, right_dots)
+        left_icons = message.ld if hasattr(message, 'ld') else ClockIcons.DOT
+        right_icons = message.rd if hasattr(message, 'rd') else ClockIcons.NONE
+        self._display_on_dgt_pi(text, message.beep, left_icons, right_icons)
 
     def display_time_on_clock(self, force=False):
         if self.clock_running or force:
@@ -148,7 +147,7 @@ class DgtPi(DgtIface):
                 if res < 0:
                     logging.warning('Finally failed')
         else:
-            logging.debug('DGT clock isnt running - no need for endClock')
+            logging.debug('(i2c) clock isnt running - no need for endText')
 
     def light_squares_revelation_board(self, uci_move):
         pass
@@ -157,9 +156,9 @@ class DgtPi(DgtIface):
         pass
 
     def stop_clock(self):
-        self.resume_clock(ClockSide.NONE)
+        self._resume_clock(ClockSide.NONE)
 
-    def resume_clock(self, side):
+    def _resume_clock(self, side):
         l_hms = self.time_left
         r_hms = self.time_right
         if l_hms is None or r_hms is None:

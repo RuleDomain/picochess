@@ -42,7 +42,8 @@ from dgthw import DgtHw
 from dgtpi import DgtPi
 from dgtvr import DgtVr
 from dgtdisplay import DgtDisplay
-from dgtserial import DgtSerial
+# from dgtserial import DgtSerial
+from dgtboard import DgtBoard
 from dgttranslate import DgtTranslate
 
 from logging.handlers import RotatingFileHandler
@@ -87,13 +88,9 @@ class AlternativeMover:
 def main():
 
     def display_system_info():
-        if args.enable_internet:
-            place = get_location()
-            addr = get_ip()
-        else:
-            place = '?'
-            addr = None
-        DisplayMsg.show(Message.SYSTEM_INFO(info={'version': version, 'location': place, 'ip': addr,
+        location, ext_ip, int_ip = get_location()
+        DisplayMsg.show(Message.SYSTEM_INFO(info={'version': version, 'location': location,
+                                                  'ext_ip': ext_ip, 'int_ip': int_ip,
                                                   'engine_name': engine_name, 'user_name': user_name
                                                   }))
 
@@ -158,6 +155,8 @@ def main():
     def stop_search_and_clock():
         if interaction_mode == Mode.NORMAL:
             stop_clock()
+            if not engine.is_waiting():
+                stop_search()
         elif interaction_mode in (Mode.REMOTE, Mode.OBSERVE):
             stop_clock()
             stop_search()
@@ -317,11 +316,15 @@ def main():
                     else:
                         legal_fens = compute_legal_fens(game)
 
-                    if interaction_mode in (Mode.ANALYSIS, Mode.KIBITZ, Mode.PONDER):
-                        analyse(game)
+                    # changed cause dont want to autostart clock here too
+                    if interaction_mode == Mode.NORMAL:
+                        # start_clock()
+                        pass
                     elif interaction_mode in (Mode.OBSERVE, Mode.REMOTE):
-                        observe(game)
-                    start_clock()
+                        # observe(game)
+                        analyse(game)
+                    elif interaction_mode in (Mode.ANALYSIS, Mode.KIBITZ, Mode.PONDER):
+                        analyse(game)
                     DisplayMsg.show(Message.USER_TAKE_BACK())
                     break
 
@@ -334,7 +337,8 @@ def main():
             if interaction_mode in (Mode.ANALYSIS, Mode.KIBITZ, Mode.PONDER):
                 analyse(game)
             if interaction_mode in (Mode.OBSERVE, Mode.REMOTE):
-                observe(game)
+                # observe(game)  # dont want to autostart the clock => we are in newgame situation
+                analyse(game)
 
     def handle_move(move, ponder=None, inbook=False):
         nonlocal game
@@ -343,13 +347,13 @@ def main():
         fen = game.fen()
         turn = game.turn
 
-        # clock must be stoped BEFORE the "book_move" event cause SetNRun resets the clock display
+        # clock must be stopped BEFORE the "book_move" event cause SetNRun resets the clock display
         stop_search_and_clock()
 
         # engine or remote move
         if (interaction_mode == Mode.NORMAL or interaction_mode == Mode.REMOTE) and \
-                ((play_mode == PlayMode.USER_WHITE and game.turn == chess.BLACK) or
-                     (play_mode == PlayMode.USER_BLACK and game.turn == chess.WHITE)):
+                ((play_mode == PlayMode.USER_WHITE and turn == chess.BLACK) or
+                     (play_mode == PlayMode.USER_BLACK and turn == chess.WHITE)):
             last_computer_fen = game.board_fen()
             game.push(move)
             if inbook:
@@ -365,22 +369,21 @@ def main():
                 DisplayMsg.show(Message.BOOK_MOVE())
             searchmoves.reset()
             if interaction_mode == Mode.NORMAL:
+                DisplayMsg.show(Message.USER_MOVE(move=move, fen=fen, turn=turn, game=game.copy()))
                 if check_game_state(game, play_mode):
                     think(game, time_control)
-                text = Message.USER_MOVE(move=move, fen=fen, turn=turn, game=game.copy())
             elif interaction_mode == Mode.REMOTE:
+                DisplayMsg.show(Message.USER_MOVE(move=move, fen=fen, turn=turn, game=game.copy()))
                 if check_game_state(game, play_mode):
                     observe(game)
-                text = Message.USER_MOVE(move=move, fen=fen, turn=turn, game=game.copy())
             elif interaction_mode == Mode.OBSERVE:
+                DisplayMsg.show(Message.REVIEW_MOVE(move=move, fen=fen, turn=turn, game=game.copy(), mode=interaction_mode))
                 if check_game_state(game, play_mode):
                     observe(game)
-                text = Message.REVIEW_MOVE(move=move, fen=fen, turn=turn, game=game.copy(), mode=interaction_mode)
             else:  # interaction_mode in (Mode.ANALYSIS, Mode.KIBITZ):
+                DisplayMsg.show(Message.REVIEW_MOVE(move=move, fen=fen, turn=turn, game=game.copy(), mode=interaction_mode))
                 if check_game_state(game, play_mode):
                     analyse(game)
-                text = Message.REVIEW_MOVE(move=move, fen=fen, turn=turn, game=game.copy(), mode=interaction_mode)
-            DisplayMsg.show(text)
 
     def transfer_time(time_list):
         def num(ts):
@@ -417,10 +420,10 @@ def main():
                 level_list = sorted(eng['level_dict'])
                 try:
                     level_index = level_list.index(engine_level)
-                    return eng['level_dict'][level_list[level_index]]
+                    return eng['level_dict'][level_list[level_index]], level_index
                 except ValueError:
                     break
-        return {}
+        return {}, None
 
     # Enable garbage collection - needed for engine swapping as objects orphaned
     gc.enable()
@@ -432,7 +435,7 @@ def main():
     parser.add_argument('-d', '--dgt-port', type=str,
                         help='enable dgt board on the given serial port such as /dev/ttyUSB0')
     parser.add_argument('-b', '--book', type=str, help='full path of book such as books/b-flank.bin',
-                        default='h-varied.bin')
+                        default='books/h-varied.bin')
     parser.add_argument('-t', '--time', type=str, default='5 0',
                         help="Time settings <FixSec> or <StMin IncSec> like '10'(move) or '5 0'(game) '3 2'(fischer)")
     parser.add_argument('-g', '--enable-gaviota', action='store_true', help='enable gavoita tablebase probing')
@@ -446,10 +449,9 @@ def main():
     parser.add_argument('-rk', '--remote-key', type=str, help='key file used to connect to the remote server')
     parser.add_argument('-pf', '--pgn-file', type=str, help='pgn file used to store the games', default='games.pgn')
     parser.add_argument('-pu', '--pgn-user', type=str, help='user name for the pgn file', default=None)
-    parser.add_argument('-ar', '--auto-reboot', action='store_true', help='reboot system after update')
     parser.add_argument('-web', '--web-server', dest='web_server_port', nargs='?', const=80, type=int, metavar='PORT',
                         help='launch web server')
-    parser.add_argument('-m', '--email', type=str, help='email used to send pgn files', default=None)
+    parser.add_argument('-m', '--email', type=str, help='email used to send pgn/log files', default=None)
     parser.add_argument('-ms', '--smtp-server', type=str, help='adress of email server', default=None)
     parser.add_argument('-mu', '--smtp-user', type=str, help='username for email server', default=None)
     parser.add_argument('-mp', '--smtp-pass', type=str, help='password for email server', default=None)
@@ -464,16 +466,20 @@ def main():
                         help='sets (some-)beep level from 0(=no beeps) to 15(=all beeps)')
     parser.add_argument('-uvoice', '--user-voice', type=str, help='voice for user', default=None)
     parser.add_argument('-cvoice', '--computer-voice', type=str, help='voice for computer', default=None)
-    parser.add_argument('-inet', '--enable-internet', action='store_true', help='enable internet lookups')
+    parser.add_argument('-update', '--enable-update', action='store_true', help='enable picochess updates')
+    parser.add_argument('-ar', '--auto-reboot', action='store_true', help='reboot system after update')
     parser.add_argument('-nook', '--disable-ok-message', action='store_true', help='disable ok confirmation messages')
     parser.add_argument('-v', '--version', action='version', version='%(prog)s version {}'.format(version),
                         help='show current version', default=None)
     parser.add_argument('-pi', '--dgtpi', action='store_true', help='use the dgtpi hardware')
-    parser.add_argument('-lang', '--language', choices=['en', 'de', 'nl', 'fr', 'es'], default='en',
+    parser.add_argument('-pt', '--ponder-time', type=int, default=2, choices=range(1,11),
+                        help='how long each part of ponder display should be visible (default=2secs)')
+    parser.add_argument('-lang', '--language', choices=['en', 'de', 'nl', 'fr', 'es', 'it'], default='en',
                         help='picochess language')
     parser.add_argument('-c', '--console', action='store_true', help='use console interface')
 
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+
     if args.engine is None:
         el = read_engine_ini()
         args.engine = el[0]['file']  # read the first engine filename and use it as standard
@@ -491,9 +497,10 @@ def main():
     p = copy.copy(vars(args))
     p['mailgun_key'] = p['remote_key'] = p['remote_pass'] = p['smtp_pass'] = '*****'
     logging.debug('startup parameters: {}'.format(p))
-
+    if unknown:
+        logging.error('invalid parameter given {}'.format(unknown))
     # Update
-    if args.enable_internet:
+    if args.enable_update:
         update_picochess(args.auto_reboot)
 
     gaviota = None
@@ -507,29 +514,29 @@ def main():
 
     # The class dgtDisplay talks to DgtHw/DgtPi or DgtVr
     dgttranslate = DgtTranslate(args.beep_config, args.beep_level, args.language)
-    DgtDisplay(args.disable_ok_message, dgttranslate).start()
+    DgtDisplay(args.disable_ok_message, args.ponder_time, dgttranslate).start()
 
     # Launch web server
     if args.web_server_port:
         WebServer(args.web_server_port).start()
 
-    dgtserial = DgtSerial(args.dgt_port, args.enable_revelation_leds, args.dgtpi)
+    dgtboard = DgtBoard(args.dgt_port, args.enable_revelation_leds, args.dgtpi)
 
     if args.console:
         # Enable keyboard input and terminal display
         logging.debug('starting picochess in virtual mode')
         KeyboardInput(dgttranslate, args.dgtpi).start()
         TerminalDisplay().start()
-        DgtVr(dgtserial, dgttranslate).start()
+        DgtVr(dgttranslate, dgtboard).start()
     else:
         # Connect to DGT board
         logging.debug('starting picochess in board mode')
         if args.dgtpi:
-            DgtPi(dgtserial, dgttranslate).start()
-        DgtHw(dgtserial, dgttranslate).start()
+            DgtPi(dgttranslate).start()
+        DgtHw(dgttranslate, dgtboard).start()
     # Save to PGN
     emailer = Emailer(
-        net=args.enable_internet, email=args.email, mailgun_key=args.mailgun_key,
+        email=args.email, mailgun_key=args.mailgun_key,
         smtp_server=args.smtp_server, smtp_user=args.smtp_user,
         smtp_pass=args.smtp_pass, smtp_encryption=args.smtp_encryption, smtp_from=args.smtp_from)
 
@@ -557,6 +564,8 @@ def main():
         engine_name = engine.get().name
     except AttributeError:
         logging.error('no engines started')
+        DisplayMsg.show(Message.ENGINE_FAIL())
+        time.sleep(3)
         sys.exit(-1)
 
     # Startup - internal
@@ -577,7 +586,8 @@ def main():
     last_legal_fens = []
     game_declared = False  # User declared resignation or draw
 
-    engine.startup(get_engine_level_dict(args.engine_level))
+    engine_opt, level_index = get_engine_level_dict(args.engine_level)
+    engine.startup(engine_opt)
 
     # Startup - external
     time_control, time_text = transfer_time(args.time.split())
@@ -590,7 +600,7 @@ def main():
     DisplayMsg.show(Message.STARTUP_INFO(info={'interaction_mode': interaction_mode, 'play_mode': play_mode,
                                                'books': all_books, 'book_index': book_index, 'level_text': level_text,
                                                'time_control': time_control, 'time_text': time_text}))
-    DisplayMsg.show(Message.ENGINE_STARTUP(shell=engine.get_shell(), file=engine.get_file(),
+    DisplayMsg.show(Message.ENGINE_STARTUP(shell=engine.get_shell(), file=engine.get_file(), level_index=level_index,
                                            has_levels=engine.has_levels(), has_960=engine.has_chess960()))
 
     system_info_thread = threading.Timer(0, display_system_info)
@@ -664,6 +674,8 @@ def main():
                             except AttributeError:
                                 # Help - old engine failed to restart. There is no engine
                                 logging.error('no engines started')
+                                DisplayMsg.show(Message.ENGINE_FAIL())
+                                time.sleep(3)
                                 sys.exit(-1)
                         # Schedule cleanup of old objects
                         gc.collect()
@@ -703,28 +715,31 @@ def main():
                     break
 
                 if case(EventApi.NEW_GAME):
-                    logging.debug('starting a new game with code: {}'.format(event.pos960))
-                    uci960 = event.pos960 != 518
+                    if game.move_stack or (game.chess960_pos() != event.pos960):
+                        logging.debug('starting a new game with code: {}'.format(event.pos960))
+                        uci960 = event.pos960 != 518
 
-                    if game.move_stack:
                         if not (game.is_game_over() or game_declared):
                             DisplayMsg.show(Message.GAME_ENDS(result=GameResult.ABORT, play_mode=play_mode, game=game.copy()))
-                    game = chess.Board()
-                    if uci960:
-                        game.set_chess960_pos(event.pos960)
-                    # see setup_position
-                    stop_search_and_clock()
-                    if engine.has_chess960():
-                        engine.option('UCI_Chess960', uci960)
-                        engine.send()
-                    legal_fens = compute_legal_fens(game)
-                    last_legal_fens = []
-                    last_computer_fen = None
-                    time_control.reset()
-                    searchmoves.reset()
-                    DisplayMsg.show(Message.START_NEW_GAME(time_control=time_control, game=game.copy()))
-                    game_declared = False
-                    set_wait_state()
+
+                        game = chess.Board()
+                        if uci960:
+                            game.set_chess960_pos(event.pos960)
+                        # see setup_position
+                        stop_search_and_clock()
+                        if engine.has_chess960():
+                            engine.option('UCI_Chess960', uci960)
+                            engine.send()
+                        legal_fens = compute_legal_fens(game)
+                        last_legal_fens = []
+                        last_computer_fen = None
+                        time_control.reset()
+                        searchmoves.reset()
+                        DisplayMsg.show(Message.START_NEW_GAME(time_control=time_control, game=game.copy()))
+                        game_declared = False
+                        set_wait_state()
+                    else:
+                        logging.debug('no need to start a new game')
                     break
 
                 if case(EventApi.PAUSE_RESUME):
@@ -802,7 +817,7 @@ def main():
                 if case(EventApi.NEW_PV):
                     # illegal moves can occur if a pv from the engine arrives at the same time as a user move.
                     if game.is_legal(event.pv[0]):
-                        DisplayMsg.show(Message.NEW_PV(pv=event.pv, mode=interaction_mode, fen=game.fen(), turn=game.turn))
+                        DisplayMsg.show(Message.NEW_PV(pv=event.pv, mode=interaction_mode, game=game.copy()))
                     else:
                         logging.info('illegal move can not be displayed. move:%s fen=%s', event.pv[0], game.fen())
                     break
@@ -866,7 +881,7 @@ def main():
 
                 if case(EventApi.EMAIL_LOG):
                     if args.log_file:
-                        email_logger = Emailer(net=args.enable_internet, email=args.email, mailgun_key=args.mailgun_key,
+                        email_logger = Emailer(email=args.email, mailgun_key=args.mailgun_key,
                                                smtp_server=args.smtp_server, smtp_user=args.smtp_user,
                                                smtp_pass=args.smtp_pass, smtp_encryption=args.smtp_encryption,
                                                smtp_from=args.smtp_from)

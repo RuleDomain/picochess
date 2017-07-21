@@ -20,14 +20,13 @@ from threading import Timer, Thread, Lock
 
 
 class DgtIface(DisplayDgt, Thread):
-    def __init__(self, dgtserial, dgttranslate):
+    def __init__(self, dgttranslate, dgtboard=None):
         super(DgtIface, self).__init__()
 
-        self.dgtserial = dgtserial
+        self.dgtboard = dgtboard
         self.dgttranslate = dgttranslate
 
         self.enable_dgt_3000 = False
-        self.enable_dgt_pi = self.dgtserial.is_pi
         self.clock_found = False
         self.time_left = None
         self.time_right = None
@@ -61,7 +60,7 @@ class DgtIface(DisplayDgt, Thread):
     def stop_clock(self):
         raise NotImplementedError()
 
-    def resume_clock(self, side):
+    def _resume_clock(self, side):
         raise NotImplementedError()
 
     def start_clock(self, time_left, time_right, side):
@@ -71,7 +70,6 @@ class DgtIface(DisplayDgt, Thread):
         self.maxtimer_running = False
         if self.clock_running:
             logging.debug('showing the running clock again')
-            # self.display_time_on_clock(force=False)
             self.show(Dgt.DISPLAY_TIME(force=False, wait=True))
         else:
             logging.debug('clock not running - ignored maxtime')
@@ -114,13 +112,13 @@ class DgtIface(DisplayDgt, Thread):
                 self.start_clock(message.time_left, message.time_right, message.side)
                 break
             if case(DgtApi.CLOCK_VERSION):
-                if not self.clock_found:
-                    text = self.dgttranslate.text('Y20_picochess')
-                    text.rd = ClockDots.DOT
-                    self.show(text)
-                self.clock_found = True
-                if message.main == 2:
-                    self.enable_dgt_3000 = True
+                text = self.dgttranslate.text('Y20_picochess', devs={message.attached})
+                text.rd = ClockIcons.DOT
+                self.show(text)
+                if message.attached != 'i2c':
+                    self.clock_found = True
+                    if message.main == 2:
+                        self.enable_dgt_3000 = True
                 break
             if case(DgtApi.CLOCK_TIME):
                 self.time_left = message.time_left
@@ -131,7 +129,7 @@ class DgtIface(DisplayDgt, Thread):
 
     def _process_message(self, message):
         do_handle = True
-        if repr(message) in (DgtApi.CLOCK_START, DgtApi.CLOCK_STOP):
+        if repr(message) in (DgtApi.CLOCK_START, DgtApi.CLOCK_STOP, DgtApi.CLOCK_TIME):
             self.display_hash = None  # Cant know the clock display if command changing the running status
         else:
             if repr(message) in (DgtApi.DISPLAY_MOVE, DgtApi.DISPLAY_TEXT):

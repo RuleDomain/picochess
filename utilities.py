@@ -36,7 +36,7 @@ except ImportError:
 
 
 # picochess version
-version = '078'
+version = '080'
 
 evt_queue = queue.Queue()
 serial_queue = queue.Queue()
@@ -124,6 +124,8 @@ class MessageApi():
     EBOARD_VERSION = 'MSG_EBOARD_VERSION'  # Startup Message after a successful connection to an E-Board
     SWITCH_SIDES = 'MSG_SWITCH_SIDES'  # Forget the engines move, and let it be user's turn
     KEYBOARD_MOVE = 'MSG_KEYBOARD_MOVE'  # Sends back the fen for a given move (needed for keyboard.py)
+    SYSTEM_SHUTDOWN = 'MSG_SYSTEM_SHUTDOWN'  # Sends a Shutdown
+    SYSTEM_REBOOT = 'MSG_SYSTEM_REBOOT'  # Sends a Reboot
 
 
 class DgtApi():
@@ -319,6 +321,7 @@ class Language(enum.Enum):
     NL = 'B00_language_nl_menu'
     FR = 'B00_language_fr_menu'
     ES = 'B00_language_es_menu'
+    IT = 'B00_language_it_menu'
 
 
 class LanguageLoop(object):
@@ -336,12 +339,16 @@ class LanguageLoop(object):
         elif m == Language.FR:
             return Language.ES
         elif m == Language.ES:
+            return Language.IT
+        elif m == Language.IT:
             return Language.EN
         return 'error Language next'
 
     @staticmethod
     def prev(m):
         if m == Language.EN:
+            return Language.IT
+        if m == Language.IT:
             return Language.ES
         if m == Language.ES:
             return Language.FR
@@ -423,7 +430,7 @@ class ClockSide(enum.Enum):
 
 
 @enum.unique
-class ClockDots(enum.Enum):
+class ClockIcons(enum.Enum):
     NONE = 0x00
     COLON = 0x08
     DOT = 0x10
@@ -669,17 +676,17 @@ class Message():
     # Messages to display devices
     COMPUTER_MOVE = ClassFactory(MessageApi.COMPUTER_MOVE, ['move', 'ponder', 'fen', 'turn', 'game', 'time_control', 'wait'])
     BOOK_MOVE = ClassFactory(MessageApi.BOOK_MOVE, [])
-    NEW_PV = ClassFactory(MessageApi.NEW_PV, ['pv', 'mode', 'fen', 'turn'])
+    NEW_PV = ClassFactory(MessageApi.NEW_PV, ['pv', 'mode', 'game'])
     REVIEW_MOVE = ClassFactory(MessageApi.REVIEW_MOVE, ['move', 'fen', 'turn', 'game', 'mode'])
     ENGINE_READY = ClassFactory(MessageApi.ENGINE_READY, ['eng', 'eng_text', 'engine_name', 'has_levels', 'has_960', 'ok_text'])
-    ENGINE_STARTUP = ClassFactory(MessageApi.ENGINE_STARTUP, ['shell', 'file', 'has_levels', 'has_960'])
+    ENGINE_STARTUP = ClassFactory(MessageApi.ENGINE_STARTUP, ['shell', 'file', 'level_index', 'has_levels', 'has_960'])
     ENGINE_FAIL = ClassFactory(MessageApi.ENGINE_FAIL, [])
     LEVEL = ClassFactory(MessageApi.LEVEL, ['level_text'])
     TIME_CONTROL = ClassFactory(MessageApi.TIME_CONTROL, ['time_text', 'ok_text'])
     OPENING_BOOK = ClassFactory(MessageApi.OPENING_BOOK, ['book_text', 'ok_text'])
     DGT_BUTTON = ClassFactory(MessageApi.DGT_BUTTON, ['button'])
     DGT_FEN = ClassFactory(MessageApi.DGT_FEN, ['fen'])
-    DGT_CLOCK_VERSION = ClassFactory(MessageApi.DGT_CLOCK_VERSION, ['main', 'sub', 'attached'])
+    DGT_CLOCK_VERSION = ClassFactory(MessageApi.DGT_CLOCK_VERSION, ['main', 'sub', 'attached', 'text'])
     DGT_CLOCK_TIME = ClassFactory(MessageApi.DGT_CLOCK_TIME, ['time_left', 'time_right'])
     DGT_SERIAL_NR = ClassFactory(MessageApi.DGT_SERIAL_NR, ['number'])
 
@@ -706,6 +713,8 @@ class Message():
     EBOARD_VERSION = ClassFactory(MessageApi.EBOARD_VERSION, ['text', 'channel'])
     SWITCH_SIDES = ClassFactory(MessageApi.SWITCH_SIDES, ['move'])
     KEYBOARD_MOVE = ClassFactory(MessageApi.KEYBOARD_MOVE, ['fen'])
+    SYSTEM_SHUTDOWN = ClassFactory(MessageApi.SYSTEM_SHUTDOWN, [])
+    SYSTEM_REBOOT = ClassFactory(MessageApi.SYSTEM_REBOOT, [])
 
 
 class Event():
@@ -793,7 +802,8 @@ def update_picochess(auto_reboot=False):
 
 def shutdown(dgtpi):
     logging.debug('shutting down system')
-    time.sleep(1)  # give some time to send out the pgn file
+    DisplayMsg.show(Message.SYSTEM_SHUTDOWN())
+    time.sleep(2)  # give some time to send out the pgn file or speak the event
     if platform.system() == 'Windows':
         os.system('shutdown /s')
     elif dgtpi:
@@ -804,30 +814,24 @@ def shutdown(dgtpi):
 
 def reboot():
     logging.debug('rebooting system')
-    time.sleep(1)  # give some time to send out the pgn file
+    DisplayMsg.show(Message.SYSTEM_REBOOT())
+    time.sleep(2)  # give some time to send out the pgn file or speak the event
     os.system('reboot')
-
-
-def get_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(('google.com', 80))
-        return s.getsockname()[0]
-
-    # TODO: Better handling of exceptions of socket connect
-    except socket.error:
-        logging.error("no internet connection!")
-    finally:
-        s.close()
 
 
 def get_location():
     try:
-        response = urllib.request.urlopen('http://www.telize.com/geoip/')
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        int_ip = s.getsockname()[0]
+        s.close()
+
+        response = urllib.request.urlopen('https://freegeoip.net/json/')
         j = json.loads(response.read().decode())
-        country = j['country'] + ' ' if 'country' in j else ''
+        country_name = j['country_name'] + ' ' if 'country_name' in j else ''
         country_code = j['country_code'] + ' ' if 'country_code' in j else ''
+        ext_ip = j['ip'] if 'ip' in j else None
         city = j['city'] + ', ' if 'city' in j else ''
-        return city + country + country_code
+        return city + country_name + country_code, ext_ip, int_ip
     except:
-        return '?'
+        return '?', None, None

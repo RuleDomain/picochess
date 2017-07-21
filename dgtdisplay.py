@@ -26,9 +26,10 @@ from configobj import ConfigObj
 
 
 class DgtDisplay(Observable, DisplayMsg, threading.Thread):
-    def __init__(self, disable_ok_message, dgttranslate):
+    def __init__(self, disable_ok_message, ponder_time, dgttranslate):
         super(DgtDisplay, self).__init__()
         self.show_ok_message = not disable_ok_message
+        self.ponder_time = ponder_time
         self.dgttranslate = dgttranslate
 
         self.flip_board = False
@@ -38,6 +39,7 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
         self.drawresign_fen = None
         self.show_setup_pieces_msg = True
         self.show_move_or_value = 0
+        self.leds_are_on = False
 
         self._reset_moves_and_score()
 
@@ -68,19 +70,20 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
         self.system_sound_index = self.dgttranslate.beep
 
         self.system_language_result = None
-        langs = {'en': Language.EN, 'de': Language.DE, 'nl': Language.NL, 'fr': Language.FR, 'es': Language.ES}
+        langs = {'en': Language.EN, 'de': Language.DE, 'nl': Language.NL,
+                 'fr': Language.FR, 'es': Language.ES, 'it': Language.IT}
         self.system_language_index = langs[self.dgttranslate.language]
 
         self.time_mode_result = None
         self.time_mode_index = TimeMode.BLITZ
 
-        self.time_control_fixed_index = 0
-        self.time_control_blitz_index = 2  # Default time control: Blitz, 5min
-        self.time_control_fisch_index = 0
-        self.time_control_fixed_list = [' 1', ' 3', ' 5', '10', '15', '30', '60', '90']
-        self.time_control_blitz_list = [' 1', ' 3', ' 5', '10', '15', '30', '60', '90']
-        self.time_control_fisch_list = [' 1  1', ' 3  2', ' 4  2', ' 5  3', '10  5', '15 10', '30 15', '60 30']
-        self.time_control_fixed_map = OrderedDict([
+        self.tc_fixed_index = 0
+        self.tc_blitz_index = 2  # Default time control: Blitz, 5min
+        self.tc_fisch_index = 0
+        self.tc_fixed_list = [' 1', ' 3', ' 5', '10', '15', '30', '60', '90']
+        self.tc_blitz_list = [' 1', ' 3', ' 5', '10', '15', '30', '60', '90']
+        self.tc_fisch_list = [' 1  1', ' 3  2', ' 4  2', ' 5  3', '10  5', '15 10', '30 15', '60 30']
+        self.tc_fixed_map = OrderedDict([
             ('rnbqkbnr/pppppppp/Q7/8/8/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.FIXED, seconds_per_move=1)),
             ('rnbqkbnr/pppppppp/1Q6/8/8/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.FIXED, seconds_per_move=3)),
             ('rnbqkbnr/pppppppp/2Q5/8/8/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.FIXED, seconds_per_move=5)),
@@ -89,7 +92,7 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
             ('rnbqkbnr/pppppppp/5Q2/8/8/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.FIXED, seconds_per_move=30)),
             ('rnbqkbnr/pppppppp/6Q1/8/8/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.FIXED, seconds_per_move=60)),
             ('rnbqkbnr/pppppppp/7Q/8/8/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.FIXED, seconds_per_move=90))])
-        self.time_control_blitz_map = OrderedDict([
+        self.tc_blitz_map = OrderedDict([
             ('rnbqkbnr/pppppppp/8/8/Q7/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.BLITZ, minutes_per_game=1)),
             ('rnbqkbnr/pppppppp/8/8/1Q6/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.BLITZ, minutes_per_game=3)),
             ('rnbqkbnr/pppppppp/8/8/2Q5/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.BLITZ, minutes_per_game=5)),
@@ -98,7 +101,7 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
             ('rnbqkbnr/pppppppp/8/8/5Q2/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.BLITZ, minutes_per_game=30)),
             ('rnbqkbnr/pppppppp/8/8/6Q1/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.BLITZ, minutes_per_game=60)),
             ('rnbqkbnr/pppppppp/8/8/7Q/8/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.BLITZ, minutes_per_game=90))])
-        self.time_control_fisch_map = OrderedDict([
+        self.tc_fisch_map = OrderedDict([
             ('rnbqkbnr/pppppppp/8/8/8/Q7/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.FISCHER, minutes_per_game=1, fischer_increment=1)),
             ('rnbqkbnr/pppppppp/8/8/8/1Q6/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.FISCHER, minutes_per_game=3, fischer_increment=2)),
             ('rnbqkbnr/pppppppp/8/8/8/2Q5/PPPPPPPP/RNBQKBNR', TimeControl(TimeMode.FISCHER, minutes_per_game=4, fischer_increment=2)),
@@ -160,7 +163,7 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
             score.l = '{:3d}{:s}'.format(self.depth, score_to_string(score.l[-8:], 'l'))
             score.m = '{:2d}{:s}'.format(self.depth % 100, score_to_string(score.m[-6:], 'm'))
             score.s = '{:2d}{:s}'.format(self.depth % 100, score_to_string(score.s[-4:], 's'))
-            score.rd = ClockDots.DOT
+            score.rd = ClockIcons.DOT
         except ValueError:
             pass
         return score
@@ -319,14 +322,14 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                 text = self.dgttranslate.text(self.time_mode_index.value)
             else:
                 if self.time_mode_index == TimeMode.FIXED:
-                    self.time_control_fixed_index = (self.time_control_fixed_index-1) % len(self.time_control_fixed_map)
-                    text = self.dgttranslate.text('B00_tc_fixed', self.time_control_fixed_list[self.time_control_fixed_index])
+                    self.tc_fixed_index = (self.tc_fixed_index - 1) % len(self.tc_fixed_map)
+                    text = self.dgttranslate.text('B00_tc_fixed', self.tc_fixed_list[self.tc_fixed_index])
                 elif self.time_mode_index == TimeMode.BLITZ:
-                    self.time_control_blitz_index = (self.time_control_blitz_index-1) % len(self.time_control_blitz_map)
-                    text = self.dgttranslate.text('B00_tc_blitz', self.time_control_blitz_list[self.time_control_blitz_index])
+                    self.tc_blitz_index = (self.tc_blitz_index - 1) % len(self.tc_blitz_map)
+                    text = self.dgttranslate.text('B00_tc_blitz', self.tc_blitz_list[self.tc_blitz_index])
                 elif self.time_mode_index == TimeMode.FISCHER:
-                    self.time_control_fisch_index = (self.time_control_fisch_index-1) % len(self.time_control_fisch_map)
-                    text = self.dgttranslate.text('B00_tc_fisch', self.time_control_fisch_list[self.time_control_fisch_index])
+                    self.tc_fisch_index = (self.tc_fisch_index - 1) % len(self.tc_fisch_map)
+                    text = self.dgttranslate.text('B00_tc_fisch', self.tc_fisch_list[self.tc_fisch_index])
                 else:
                     logging.warning('wrong value for time_mode_index: {}'.format(self.time_mode_index))
                     text = self.dgttranslate.text('Y00_errormenu')
@@ -431,14 +434,14 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                 text = self.dgttranslate.text(self.time_mode_index.value)
             else:
                 if self.time_mode_index == TimeMode.FIXED:
-                    self.time_control_fixed_index = (self.time_control_fixed_index+1) % len(self.time_control_fixed_map)
-                    text = self.dgttranslate.text('B00_tc_fixed', self.time_control_fixed_list[self.time_control_fixed_index])
+                    self.tc_fixed_index = (self.tc_fixed_index + 1) % len(self.tc_fixed_map)
+                    text = self.dgttranslate.text('B00_tc_fixed', self.tc_fixed_list[self.tc_fixed_index])
                 elif self.time_mode_index == TimeMode.BLITZ:
-                    self.time_control_blitz_index = (self.time_control_blitz_index+1) % len(self.time_control_blitz_map)
-                    text = self.dgttranslate.text('B00_tc_blitz', self.time_control_blitz_list[self.time_control_blitz_index])
+                    self.tc_blitz_index = (self.tc_blitz_index + 1) % len(self.tc_blitz_map)
+                    text = self.dgttranslate.text('B00_tc_blitz', self.tc_blitz_list[self.tc_blitz_index])
                 elif self.time_mode_index == TimeMode.FISCHER:
-                    self.time_control_fisch_index = (self.time_control_fisch_index+1) % len(self.time_control_fisch_map)
-                    text = self.dgttranslate.text('B00_tc_fisch', self.time_control_fisch_list[self.time_control_fisch_index])
+                    self.tc_fisch_index = (self.tc_fisch_index + 1) % len(self.tc_fisch_map)
+                    text = self.dgttranslate.text('B00_tc_fisch', self.tc_fisch_list[self.tc_fisch_index])
                 else:
                     logging.warning('wrong value for time_mode_index: {}'.format(self.time_mode_index))
                     text = self.dgttranslate.text('Y00_errormenu')
@@ -539,12 +542,20 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
             exit_menu = True
             if self.system_index == Settings.VERSION:
                 text = self.dgttranslate.text('B10_picochess')
-                text.rd = ClockDots.DOT
+                text.rd = ClockIcons.DOT
                 text.wait = False
             elif self.system_index == Settings.IPADR:
                 if self.ip:
+                    msg = ' '.join(self.ip.split('.')[:2])
+                    text = self.dgttranslate.text('B07_default', msg)
+                    if len(msg) == 7:  # delete the " " for XL incase its "123 456"
+                        text.s = msg[:3] + msg[4:]
+                    DisplayDgt.show(text)
                     msg = ' '.join(self.ip.split('.')[2:])
-                    text = self.dgttranslate.text('B10_default', msg)
+                    text = self.dgttranslate.text('N07_default', msg)
+                    if len(msg) == 7:  # delete the " " for XL incase its "123 456"
+                        text.s = msg[:3] + msg[4:]
+                    text.wait = True
                 else:
                     text = self.dgttranslate.text('B10_noipadr')
             elif self.system_index == Settings.SOUND:
@@ -564,7 +575,8 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                     text = self.dgttranslate.text(self.system_language_result.value)
                     exit_menu = False
                 else:
-                    langs = {Language.EN: 'en', Language.DE: 'de', Language.NL: 'nl', Language.FR: 'fr', Language.ES: 'es'}
+                    langs = {Language.EN: 'en', Language.DE: 'de', Language.NL: 'nl',
+                             Language.FR: 'fr', Language.ES: 'es', Language.IT: 'it'}
                     language = langs[self.system_language_index]
                     self.dgttranslate.set_language(language)
                     config = ConfigObj('picochess.ini')
@@ -580,7 +592,7 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
             DisplayDgt.show(text)
             if exit_menu:
                 self._reset_menu_results()
-                self._exit_display()
+                self._exit_display(wait=True)
 
         def engine4():
             eng = self.installed_engines[self.engine_index]
@@ -626,22 +638,22 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                 self.time_mode_result = self.time_mode_index
                 # display first entry of the submenu "time_control"
                 if self.time_mode_index == TimeMode.FIXED:
-                    text = self.dgttranslate.text('B00_tc_fixed', self.time_control_fixed_list[self.time_control_fixed_index])
+                    text = self.dgttranslate.text('B00_tc_fixed', self.tc_fixed_list[self.tc_fixed_index])
                 elif self.time_mode_index == TimeMode.BLITZ:
-                    text = self.dgttranslate.text('B00_tc_blitz', self.time_control_blitz_list[self.time_control_blitz_index])
+                    text = self.dgttranslate.text('B00_tc_blitz', self.tc_blitz_list[self.tc_blitz_index])
                 elif self.time_mode_index == TimeMode.FISCHER:
-                    text = self.dgttranslate.text('B00_tc_fisch', self.time_control_fisch_list[self.time_control_fisch_index])
+                    text = self.dgttranslate.text('B00_tc_fisch', self.tc_fisch_list[self.tc_fisch_index])
                 else:
                     logging.warning('wrong value for time_mode_index: {}'.format(self.time_mode_index))
                     text = self.dgttranslate.text('Y00_errormenu')
                 DisplayDgt.show(text)
             else:
                 if self.time_mode_index == TimeMode.FIXED:
-                    time_control = self.time_control_fixed_map[list(self.time_control_fixed_map)[self.time_control_fixed_index]]
+                    time_control = self.tc_fixed_map[list(self.tc_fixed_map)[self.tc_fixed_index]]
                 elif self.time_mode_index == TimeMode.BLITZ:
-                    time_control = self.time_control_blitz_map[list(self.time_control_blitz_map)[self.time_control_blitz_index]]
+                    time_control = self.tc_blitz_map[list(self.tc_blitz_map)[self.tc_blitz_index]]
                 elif self.time_mode_index == TimeMode.FISCHER:
-                    time_control = self.time_control_fisch_map[list(self.time_control_fisch_map)[self.time_control_fisch_index]]
+                    time_control = self.tc_fisch_map[list(self.tc_fisch_map)[self.tc_fisch_index]]
                 else:
                     logging.warning('wrong value for time_mode_index: {}'.format(self.time_mode_index))
                     text = self.dgttranslate.text('Y00_errormenu')
@@ -773,13 +785,15 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                     if eng['file'] == message.file:
                         self.engine_index = index
                         self.engine_has_960 = message.has_960
-                        # @todo preset correct startup level (which needs a message.engine_index parameter)
-                        self.engine_level_index = len(eng['level_dict'])-1 if eng['level_dict'] else None
+                        self.engine_level_index = message.level_index
                 break
             if case(MessageApi.ENGINE_FAIL):
                 DisplayDgt.show(self.dgttranslate.text('Y00_erroreng'))
                 break
             if case(MessageApi.COMPUTER_MOVE):
+                if self.leds_are_on:  # can happen in case of a book move
+                    logging.warning('REV2 lights still on')
+                    DisplayDgt.show(Dgt.LIGHT_CLEAR())
                 move = message.move
                 ponder = message.ponder
                 fen = message.fen
@@ -796,24 +810,28 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                 DisplayDgt.show(Dgt.DISPLAY_MOVE(move=move, fen=message.fen, side=side, wait=message.wait,
                                                  beep=self.dgttranslate.bl(BeepLevel.CONFIG), maxtime=0))
                 DisplayDgt.show(Dgt.LIGHT_SQUARES(uci_move=move.uci()))
+                self.leds_are_on = True
                 break
             if case(MessageApi.START_NEW_GAME):
-                DisplayDgt.show(Dgt.LIGHT_CLEAR())
+                if self.leds_are_on:
+                    DisplayDgt.show(Dgt.LIGHT_CLEAR())
+                    self.leds_are_on = False
                 self._reset_moves_and_score()
                 # self.mode_index = Mode.NORMAL  # @todo
                 self._reset_menu_results()
                 self.engine_finished = False
                 pos960 = message.game.chess960_pos()
-                text = self.dgttranslate.text('C10_newgame' if pos960 is None or pos960 == 518 else 'C10_ucigame',
-                                              str(pos960))
-                text.wait = True  # in case of GAME_ENDS before, wait for "abort"
-                DisplayDgt.show(text)
+                game_text = 'C10_newgame' if pos960 is None or pos960 == 518 else 'C10_ucigame'
+                DisplayDgt.show(self.dgttranslate.text(game_text, str(pos960)))
                 if self.mode_result in (Mode.NORMAL, Mode.OBSERVE, Mode.REMOTE):
                     time_left, time_right = message.time_control.current_clock_time(flip_board=self.flip_board)
                     DisplayDgt.show(Dgt.CLOCK_START(time_left=time_left, time_right=time_right, side=ClockSide.NONE))
+                    DisplayDgt.show(Dgt.DISPLAY_TIME(force=True, wait=True))  # clock is stopped, force time display
                 break
             if case(MessageApi.COMPUTER_MOVE_DONE_ON_BOARD):
-                DisplayDgt.show(Dgt.LIGHT_CLEAR())
+                if self.leds_are_on:
+                    DisplayDgt.show(Dgt.LIGHT_CLEAR())
+                    self.leds_are_on = False
                 self.last_move = self.play_move
                 self.last_fen = self.play_fen
                 self.last_turn = self.play_turn
@@ -826,6 +844,10 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                 self._reset_menu_results()
                 break
             if case(MessageApi.USER_MOVE):
+                if self.leds_are_on:  # can happen in case of a sliding move
+                    logging.warning('REV2 lights still on')
+                    DisplayDgt.show(Dgt.LIGHT_CLEAR())
+                    self.leds_are_on = False
                 self.last_move = message.move
                 self.last_fen = message.fen
                 self.last_turn = message.turn
@@ -834,6 +856,10 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                     DisplayDgt.show(self.dgttranslate.text('K05_okuser'))
                 break
             if case(MessageApi.REVIEW_MOVE):
+                if self.leds_are_on:  # can happen in case of a sliding move
+                    logging.warning('REV2 lights still on')
+                    DisplayDgt.show(Dgt.LIGHT_CLEAR())
+                    self.leds_are_on = False
                 self.last_move = message.move
                 self.last_fen = message.fen
                 self.last_turn = message.turn
@@ -861,7 +887,9 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                 self._exit_display(force=message.ok_text)
                 break
             if case(MessageApi.USER_TAKE_BACK):
-                DisplayDgt.show(Dgt.LIGHT_CLEAR())
+                if self.leds_are_on:
+                    DisplayDgt.show(Dgt.LIGHT_CLEAR())
+                    self.leds_are_on = False
                 self._reset_moves_and_score()
                 self.engine_finished = False
                 DisplayDgt.show(self.dgttranslate.text('C00_takeback'))
@@ -869,7 +897,10 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
             if case(MessageApi.GAME_ENDS):
                 if not self.engine_restart:  # filter out the shutdown/reboot process
                     ge = message.result.value
-                    DisplayDgt.show(self.dgttranslate.text(ge))
+                    text = self.dgttranslate.text(ge)
+                    text.beep = self.dgttranslate.bl(BeepLevel.CONFIG)
+                    text.maxtime = 0.5
+                    DisplayDgt.show(text)
                 break
             if case(MessageApi.INTERACTION_MODE):
                 self.mode_index = message.mode
@@ -903,8 +934,8 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                 break
             if case(MessageApi.NEW_PV):
                 self.hint_move = message.pv[0]
-                self.hint_fen = message.fen
-                self.hint_turn = message.turn
+                self.hint_fen = message.game.fen()
+                self.hint_turn = message.game.turn
                 if message.mode == Mode.ANALYSIS and self.top_result is None:
                     side = ClockSide.LEFT if (self.hint_turn == chess.WHITE) != self.flip_board else ClockSide.RIGHT
                     DisplayDgt.show(Dgt.DISPLAY_MOVE(move=self.hint_move, fen=self.hint_fen, side=side, wait=True,
@@ -914,7 +945,7 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                 self.depth = message.depth
                 break
             if case(MessageApi.SYSTEM_INFO):
-                self.ip = message.info['ip']
+                self.ip = message.info['int_ip']
                 break
             if case(MessageApi.STARTUP_INFO):
                 self.mode_index = message.info['interaction_mode']
@@ -927,21 +958,21 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                 # if user gave a non-existent tc value stay at standard
                 index = 0
                 if tc.mode == TimeMode.FIXED:
-                    for val in self.time_control_fixed_map.values():
+                    for val in self.tc_fixed_map.values():
                         if val == tc:
-                            self.time_control_fixed_index = index
+                            self.tc_fixed_index = index
                             break
                         index += 1
                 elif tc.mode == TimeMode.BLITZ:
-                    for val in self.time_control_blitz_map.values():
+                    for val in self.tc_blitz_map.values():
                         if val == tc:
-                            self.time_control_blitz_index = index
+                            self.tc_blitz_index = index
                             break
                         index += 1
                 elif tc.mode == TimeMode.FISCHER:
-                    for val in self.time_control_fisch_map.values():
+                    for val in self.tc_fisch_map.values():
                         if val == tc:
-                            self.time_control_fisch_index = index
+                            self.tc_fisch_index = index
                             break
                         index += 1
                 break
@@ -1070,28 +1101,28 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                     text.maxtime = 1  # wait 1sec not forever
                     self.fire(Event.SET_INTERACTION_MODE(mode=mode_map[fen], mode_text=text, ok_text=False))
                     self._reset_menu_results()
-                elif fen in self.time_control_fixed_map:
+                elif fen in self.tc_fixed_map:
                     logging.debug('Map-Fen: Time control fixed')
                     self.time_mode_index = TimeMode.FIXED
-                    self.time_control_fixed_index = list(self.time_control_fixed_map.keys()).index(fen)
-                    text = self.dgttranslate.text('M10_tc_fixed', self.time_control_fixed_list[self.time_control_fixed_index])
-                    self.fire(Event.SET_TIME_CONTROL(time_control=self.time_control_fixed_map[fen],
+                    self.tc_fixed_index = list(self.tc_fixed_map.keys()).index(fen)
+                    text = self.dgttranslate.text('M10_tc_fixed', self.tc_fixed_list[self.tc_fixed_index])
+                    self.fire(Event.SET_TIME_CONTROL(time_control=self.tc_fixed_map[fen],
                                                      time_text=text, ok_text=False))
                     self._reset_menu_results()
-                elif fen in self.time_control_blitz_map:
+                elif fen in self.tc_blitz_map:
                     logging.debug('Map-Fen: Time control blitz')
                     self.time_mode_index = TimeMode.BLITZ
-                    self.time_control_blitz_index = list(self.time_control_blitz_map.keys()).index(fen)
-                    text = self.dgttranslate.text('M10_tc_blitz', self.time_control_blitz_list[self.time_control_blitz_index])
-                    self.fire(Event.SET_TIME_CONTROL(time_control=self.time_control_blitz_map[fen],
+                    self.tc_blitz_index = list(self.tc_blitz_map.keys()).index(fen)
+                    text = self.dgttranslate.text('M10_tc_blitz', self.tc_blitz_list[self.tc_blitz_index])
+                    self.fire(Event.SET_TIME_CONTROL(time_control=self.tc_blitz_map[fen],
                                                      time_text=text, ok_text=False))
                     self._reset_menu_results()
-                elif fen in self.time_control_fisch_map:
+                elif fen in self.tc_fisch_map:
                     logging.debug('Map-Fen: Time control fischer')
                     self.time_mode_index = TimeMode.FISCHER
-                    self.time_control_fisch_index = list(self.time_control_fisch_map.keys()).index(fen)
-                    text = self.dgttranslate.text('M10_tc_fisch', self.time_control_fisch_list[self.time_control_fisch_index])
-                    self.fire(Event.SET_TIME_CONTROL(time_control=self.time_control_fisch_map[fen],
+                    self.tc_fisch_index = list(self.tc_fisch_map.keys()).index(fen)
+                    text = self.dgttranslate.text('M10_tc_fisch', self.tc_fisch_list[self.tc_fisch_index])
+                    self.fire(Event.SET_TIME_CONTROL(time_control=self.tc_fisch_map[fen],
                                                      time_text=text, ok_text=False))
                     self._reset_menu_results()
                 elif fen in shutdown_map:
@@ -1125,6 +1156,8 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                         logging.debug('inside the menu. fen "{}" ignored'.format(fen))
                 break
             if case(MessageApi.DGT_CLOCK_VERSION):
+                if message.attached == 'ser':  # send the "board connected message" to serial clock
+                    DisplayDgt.show(message.text)
                 DisplayDgt.show(Dgt.CLOCK_VERSION(main=message.main, sub=message.sub, attached=message.attached))
                 break
             if case(MessageApi.DGT_CLOCK_TIME):
@@ -1133,7 +1166,7 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
             if case(MessageApi.DGT_SERIAL_NR):
                 # logging.debug('Serial number {}'.format(message.number))  # actually used for watchdog (once a second)
                 if self.mode_result == Mode.PONDER and self.top_result is None:
-                    if self.show_move_or_value > 1:
+                    if self.show_move_or_value >= self.ponder_time:
                         if self.hint_move:
                             show_left = (self.hint_turn == chess.WHITE) != self.flip_board
                             text = Dgt.DISPLAY_MOVE(move=self.hint_move, fen=self.hint_fen,
@@ -1145,7 +1178,7 @@ class DgtDisplay(Observable, DisplayMsg, threading.Thread):
                         text = self._combine_depth_and_score()
                     text.wait = True
                     DisplayDgt.show(text)
-                    self.show_move_or_value = (self.show_move_or_value + 1) % 4
+                    self.show_move_or_value = (self.show_move_or_value + 1) % (self.ponder_time * 2)
                 break
             if case(MessageApi.JACK_CONNECTED_ERROR):  # this will only work in case of 2 clocks connected!
                 DisplayDgt.show(self.dgttranslate.text('Y00_errorjack'))

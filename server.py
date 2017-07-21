@@ -203,7 +203,7 @@ class WebDisplay(DisplayMsg, threading.Thread):
             if 'game_info' in self.shared:
                 if 'play_mode' in self.shared['game_info']:
                     if 'level_text' in self.shared['game_info']:
-                        engine_name += ' /{0}\\'.format(self.shared['game_info']['level_text'].m)
+                        engine_name += ' [{0}]'.format(self.shared['game_info']['level_text'].m)
                     pgn_game.headers['Black'] = \
                         engine_name if self.shared['game_info']['play_mode'] == PlayMode.USER_WHITE else user_name
                     pgn_game.headers['White'] = \
@@ -296,11 +296,17 @@ class WebDisplay(DisplayMsg, threading.Thread):
                 EventHandler.write_to_clients({'event': 'Message', 'msg': 'Connect an E-Board please!'})
                 break
             if case(MessageApi.EBOARD_VERSION):
-                result = {'event': 'Message', 'msg': 'DGT board connected through ' + message.channel}
+                result = {'event': 'Message', 'msg': message.text.l + ' connected through ' + message.channel}
                 EventHandler.write_to_clients(result)
                 break
             if case(MessageApi.DGT_CLOCK_VERSION):
-                result = {'event': 'Message', 'msg': 'DGT clock connected through ' + message.attached}
+                if message.attached == 'ser':
+                    attached = 'serial'
+                elif message.attached == 'i2c':
+                    attached = 'i2c'
+                else:
+                    attached = 'virtual'
+                result = {'event': 'Message', 'msg': 'DGT clock connected through ' + attached}
                 EventHandler.write_to_clients(result)
                 break
             if case(MessageApi.COMPUTER_MOVE):
