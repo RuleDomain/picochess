@@ -1,4 +1,4 @@
-# Copyright (C) 2013-2016 Jean-Francois Romang (jromang@posteo.de)
+# Copyright (C) 2013-2017 Jean-Francois Romang (jromang@posteo.de)
 #                         Shivkumar Shivaji ()
 #                         Jürgen Précour (LocutusOfPenguin@posteo.de)
 #
@@ -22,7 +22,11 @@ import chess.pgn
 import datetime
 import logging
 import requests
-from utilities import *
+from utilities import DisplayMsg
+import os
+import queue
+from dgt.api import Message
+from dgt.util import GameResult, PlayMode, Mode
 
 from email import encoders
 from email.mime.multipart import MIMEMultipart
@@ -34,99 +38,117 @@ import mimetypes
 
 
 class Emailer(object):
-    def __init__(self, email=None, mailgun_key=None,
-                 smtp_server=None, smtp_user=None,
-                 smtp_pass=None, smtp_encryption=False, smtp_from=None):
-        if email:  # check if email address is provided by picochess.ini and network traffic is allowed
+
+    """Handle eMail with subject, body and an attached file."""
+
+    def __init__(self, email=None, mailgun_key=None):
+        if email:  # check if email address is provided by picochess.ini
             self.email = email
         else:
             self.email = False
-        # store information for SMTP based mail delivery
-        self.smtp_server = smtp_server
-        self.smtp_encryption = smtp_encryption
-        self.smtp_user = smtp_user
-        self.smtp_pass = smtp_pass
-        # store information for mailgun mail delivery
+        self.smtp_server = None
+        self.smtp_encryption = None
+        self.smtp_user = None
+        self.smtp_pass = None
+        self.smtp_from = None
+
         if email and mailgun_key:
             self.mailgun_key = base64.b64decode(str.encode(mailgun_key)).decode('utf-8')
         else:
             self.mailgun_key = False
-        self.smtp_from = smtp_from
 
-    def send(self, subject, body, path):
+    def _use_smtp(self, subject, body, path):
+        # if self.smtp_server is not provided than don't try to send email via smtp service
+        logging.debug('SMTP Mail delivery: Started')
+        # change to smtp based mail delivery
+        # depending on encrypted mail delivery, we need to import the right lib
+        if self.smtp_encryption:
+            # lib with ssl encryption
+            logging.debug('SMTP Mail delivery: Import SSL SMTP Lib')
+            from smtplib import SMTP_SSL as SMTP
+        else:
+            # lib without encryption (SMTP-port 21)
+            logging.debug('SMTP Mail delivery: Import standard SMTP Lib (no SSL encryption)')
+            from smtplib import SMTP
+        conn = False
+        try:
+            outer = MIMEMultipart()
+            outer['Subject'] = subject  # put subject to mail
+            outer['From'] = 'Your PicoChess computer <{}>'.format(self.smtp_from)
+            outer['To'] = self.email
+            outer.attach(MIMEText(body, 'plain'))  # pack the pgn to Email body
+
+            ctype, encoding = mimetypes.guess_type(path)
+            if ctype is None or encoding is not None:
+                ctype = 'application/octet-stream'
+            maintype, subtype = ctype.split('/', 1)
+            if maintype == 'text':
+                with open(path) as fpath:
+                    msg = MIMEText(fpath.read(), _subtype=subtype)
+            elif maintype == 'image':
+                with open(path, 'rb') as fpath:
+                    msg = MIMEImage(fpath.read(), _subtype=subtype)
+            elif maintype == 'audio':
+                with open(path, 'rb') as fpath:
+                    msg = MIMEAudio(fpath.read(), _subtype=subtype)
+            else:
+                with open(path, 'rb') as fpath:
+                    msg = MIMEBase(maintype, subtype)
+                    msg.set_payload(fpath.read())
+                encoders.encode_base64(msg)
+            msg.add_header('Content-Disposition', 'attachment', filename=os.path.basename(path))
+            outer.attach(msg)
+
+            logging.debug('SMTP Mail delivery: trying to connect to ' + self.smtp_server)
+            conn = SMTP(self.smtp_server)  # contact smtp server
+            conn.set_debuglevel(False)  # no debug info from smtp lib
+            if self.smtp_user is not None and self.smtp_pass is not None:
+                logging.debug('SMTP Mail delivery: trying to log to SMTP Server')
+                conn.login(self.smtp_user, self.smtp_pass)  # login at smtp server
+
+            logging.debug('SMTP Mail delivery: trying to send email')
+            conn.sendmail(self.smtp_from, self.email, outer.as_string())
+            # @todo should check the result from sendmail
+            logging.debug('SMTP Mail delivery: successfuly delivered message to SMTP server')
+        except Exception as smtp_exc:
+            logging.error('SMTP Mail delivery: Failed')
+            logging.error('SMTP Mail delivery: ' + str(smtp_exc))
+        finally:
+            if conn:
+                conn.close()
+            logging.debug('SMTP Mail delivery: Ended')
+
+    def _use_mailgun(self, subject, body):
+        out = requests.post('https://api.mailgun.net/v3/picochess.org/messages',
+                            auth=('api', self.mailgun_key),
+                            data={'from': 'Your PicoChess computer <no-reply@picochess.org>',
+                                  'to': self.email,
+                                  'subject': subject,
+                                  'text': body})
+        logging.debug(out)
+
+    def set_smtp(self, sserver=None, sencryption=None, suser=None, spass=None, sfrom=None):
+        """store information for SMTP based mail delivery."""
+        self.smtp_server = sserver
+        self.smtp_encryption = sencryption
+        self.smtp_user = suser
+        self.smtp_pass = spass
+        self.smtp_from = sfrom
+
+    def send(self, subject: str, body: str, path: str):
+        """send the email out."""
         if self.email:  # check if email adress to send the pgn to is provided
             if self.mailgun_key:  # check if we have mailgun-key available to send the pgn successful
-                out = requests.post('https://api.mailgun.net/v3/picochess.org/messages',
-                                    auth=('api', self.mailgun_key),
-                                    data={'from': 'Your PicoChess computer <no-reply@picochess.org>',
-                                          'to': self.email,
-                                          'subject': subject,
-                                          'text': body})
-                logging.debug(out)
+                self._use_mailgun(subject=subject, body=body)
             if self.smtp_server:  # check if smtp server adress provided
-                # if self.smtp_server is not provided than don't try to send email via smtp service
-                logging.debug('SMTP Mail delivery: Started')
-                # change to smtp based mail delivery
-                # depending on encrypted mail delivery, we need to import the right lib
-                if self.smtp_encryption:
-                    # lib with ssl encryption
-                    logging.debug('SMTP Mail delivery: Import SSL SMTP Lib')
-                    from smtplib import SMTP_SSL as SMTP
-                else:
-                    # lib without encryption (SMTP-port 21)
-                    logging.debug('SMTP Mail delivery: Import standard SMTP Lib (no SSL encryption)')
-                    from smtplib import SMTP
-                try:
-                    outer = MIMEMultipart()
-                    outer['Subject'] = subject  # put subject to mail
-                    outer['From'] = 'Your PicoChess computer <{}>'.format(self.smtp_from)
-                    outer['To'] = self.email
-                    outer.attach(MIMEText(body, 'plain'))  # pack the pgn to Email body
-
-                    ctype, encoding = mimetypes.guess_type(path)
-                    if ctype is None or encoding is not None:
-                        ctype = 'application/octet-stream'
-                    maintype, subtype = ctype.split('/', 1)
-                    if maintype == 'text':
-                        with open(path) as fp:
-                            msg = MIMEText(fp.read(), _subtype=subtype)
-                    elif maintype == 'image':
-                        with open(path, 'rb') as fp:
-                            msg = MIMEImage(fp.read(), _subtype=subtype)
-                    elif maintype == 'audio':
-                        with open(path, 'rb') as fp:
-                            msg = MIMEAudio(fp.read(), _subtype=subtype)
-                    else:
-                        with open(path, 'rb') as fp:
-                            msg = MIMEBase(maintype, subtype)
-                            msg.set_payload(fp.read())
-                        encoders.encode_base64(msg)
-                    msg.add_header('Content-Disposition', 'attachment', filename=os.path.basename(path))
-                    outer.attach(msg)
-
-                    logging.debug('SMTP Mail delivery: trying to connect to ' + self.smtp_server)
-                    conn = SMTP(self.smtp_server)  # contact smtp server
-                    conn.set_debuglevel(False)  # no debug info from smtp lib
-                    logging.debug('SMTP Mail delivery: trying to log to SMTP Server')
-                    conn.login(self.smtp_user, self.smtp_pass)  # login at smtp server
-                    try:
-                        logging.debug('SMTP Mail delivery: trying to send email')
-                        conn.sendmail(self.smtp_from, self.email, outer.as_string())
-                        # @todo should check the result from sendmail
-                        logging.debug('SMTP Mail delivery: successfuly delivered message to SMTP server')
-                    except Exception as e:
-                        logging.error('SMTP Mail delivery: Failed')
-                        logging.error('SMTP Mail delivery: ' + str(e))
-                    finally:
-                        conn.close()
-                        logging.debug('SMTP Mail delivery: Ended')
-                except Exception as e:
-                    logging.error('SMTP Mail delivery: Failed')
-                    logging.error('SMTP Mail delivery: ' + str(e))
+                self._use_smtp(subject=subject, body=body, path=path)
 
 
 class PgnDisplay(DisplayMsg, threading.Thread):
-    def __init__(self, file_name, emailer):
+
+    """Deal with DisplayMessages related to pgn."""
+
+    def __init__(self, file_name: str, emailer: Emailer):
         super(PgnDisplay, self).__init__()
         self.file_name = file_name
         self.emailer = emailer
@@ -137,9 +159,9 @@ class PgnDisplay(DisplayMsg, threading.Thread):
         self.location = ''
         self.level_text = None
 
-    def save_and_email_pgn(self, message):
+    def _save_and_email_pgn(self, message):
         logging.debug('Saving game to [' + self.file_name + ']')
-        pgn_game = chess.pgn.Game().from_board(message.game.copy())
+        pgn_game = chess.pgn.Game().from_board(message.game)
 
         # Headers
         pgn_game.headers['Event'] = 'PicoChess game'
@@ -177,43 +199,53 @@ class PgnDisplay(DisplayMsg, threading.Thread):
         file.close()
         self.emailer.send('Game PGN', str(pgn_game), self.file_name)
 
+    def _process_message(self, message):
+        if False:  # switch-case
+            pass
+
+        elif isinstance(message, Message.SYSTEM_INFO):
+            self.engine_name = message.info['engine_name']
+            self.old_engine = self.engine_name
+            self.user_name = message.info['user_name']
+
+        elif isinstance(message, Message.IP_INFO):
+            self.location = message.info['location']
+
+        elif isinstance(message, Message.STARTUP_INFO):
+            self.level_text = message.info['level_text']
+
+        elif isinstance(message, Message.LEVEL):
+            self.level_text = message.level_text
+
+        elif isinstance(message, Message.INTERACTION_MODE):
+            if message.mode == Mode.REMOTE:
+                self.old_engine = self.engine_name
+                self.engine_name = 'Remote Player'
+            else:
+                self.engine_name = self.old_engine
+
+        elif isinstance(message, Message.ENGINE_READY):
+            self.engine_name = message.engine_name
+            if not message.has_levels:
+                self.level_text = None
+
+        elif isinstance(message, Message.GAME_ENDS):
+            if message.game.move_stack:
+                self._save_and_email_pgn(message)
+
+        else:  # Default
+            # print(message)
+            pass
+
     def run(self):
+        """called from threading.Thread by its start() function."""
         logging.info('msg_queue ready')
         while True:
             # Check if we have something to display
             try:
                 message = self.msg_queue.get()
-                for case in switch(message):
-                    if case(MessageApi.SYSTEM_INFO):
-                        self.engine_name = message.info['engine_name']
-                        self.old_engine = self.engine_name
-                        self.user_name = message.info['user_name']
-                        self.location = message.info['location']
-                        break
-                    if case(MessageApi.STARTUP_INFO):
-                        self.level_text = message.info['level_text']
-                        break
-                    if case(MessageApi.LEVEL):
-                        self.level_text = message.level_text
-                        break
-                    if case(MessageApi.INTERACTION_MODE):
-                        if message.mode == Mode.REMOTE:
-                            self.old_engine = self.engine_name
-                            self.engine_name = 'Remote Player'
-                        else:
-                            self.engine_name = self.old_engine
-                        break
-                    if case(MessageApi.ENGINE_READY):
-                        self.engine_name = message.engine_name
-                        if not message.has_levels:
-                            self.level_text = None
-                        break
-                    if case(MessageApi.GAME_ENDS):
-                        if message.game.move_stack:
-                            self.save_and_email_pgn(message)
-                        break
-                    if case():  # Default
-                        # print(message)
-                        pass
+                # if repr(message) != MessageApi.DGT_SERIAL_NR:
+                #     logging.debug("received message from msg_queue: %s", message)
+                self._process_message(message)
             except queue.Empty:
                 pass

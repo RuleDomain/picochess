@@ -75,7 +75,7 @@ engines are set with the extra **black** queen.
 
 * **A6** - Stockfish 7
 * **B6** - Texel 1.06
-* **C6** - Arasan 18.3
+* **C6** - Arasan 20.0
 * **D6** - Rodent II
 * **E6** - Zurichess skills
 * **F6** - Floyd 0.8 dev
@@ -169,7 +169,7 @@ Postition Menu
 --------------
 
 Here you can setup a position. To enter this, picochess will answer you some questions. You can setup the position before y enter this menu or before you press >" at last step (=scan).
-Here are the list of questions to be answered:
+With the "=" button you can shortcut the 4 levels (useful for similar positions). Here are the list of questions to be answered:
 
 * **side** - decides with side to move first
 * **origin** - is the board flipped (which side of board is white which is black)
@@ -200,26 +200,28 @@ System Menu
 Here you choose between the following:
 
 * **version** - showing you the current picochess version
-* **ip adr** - showing you the last part of your ip-adr. This is needed for example to use the picochess webserver (see below)
+* **ip adr** - showing you the ip-adr. This is needed for example to use the picochess webserver (see below)
 * **sound** - controls the beeps of your dgt clock. You can change between "never", "sometimes", or "always"
 * **language** - sets the language of clock messages. You can choose between english, german, french, dutch and spanish
 * **logfile** - sends a debug log file to your eMail box. Thats for us developers to have a clue what is going on at picochess. Please use this only if you asked for it.
+* **voice** - selects the voice for the computer and user. Also you can change the voice speed factor.
+* **display** - selects the ponder-time or if you see confirmation messages
 
 System shutdown
 ---------------
 
-From the start position, replace the white king with the extra white queen; this will shut down the machine (takes a few seconds until the blue light turns off). You can also do it with only the two white queens on the board (on e1,d1).
+From the start position, replace the white king with the extra white queen; this will shut down the machine (takes a few seconds until the light turns off). You can also do it with only the two white queens on the board (on e1,d1).
 
 System reboot
 -------------
 
-From the start position, replace the black king with the extra black queen; this will reboot the machine (takes a few seconds until the blue light turns off). You can also do it with only the two black queens on the board (on e8,d8).
+From the start position, replace the black king with the extra black queen; this will reboot the machine (takes a few seconds until the light turns off). You can also do it with only the two black queens on the board (on e8,d8).
 
 PGN file support
 ----------------
 
 All moves of the played game along with engine are stored at the end of the game.
-Every game played with picochess is stored in the /opt/picochess folder as "games.pgn".
+Every game played with picochess is stored in the /opt/picochess/games folder as "games.pgn" (name can be changed by ini).
 If you want to end it before and write out the pgn file including the correct result, you can do as following:
 Placing the two kings on opposite centre squares will signal a resignation:
 - If both kings on white, the result is white wins and the game recorded 1-0

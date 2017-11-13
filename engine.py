@@ -1,4 +1,4 @@
-# Copyright (C) 2013-2016 Jean-Francois Romang (jromang@posteo.de)
+# Copyright (C) 2013-2017 Jean-Francois Romang (jromang@posteo.de)
 #                         Shivkumar Shivaji ()
 #                         Jürgen Précour (LocutusOfPenguin@posteo.de)
 #
@@ -15,20 +15,27 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-from utilities import *
+from dgt.api import Event, Dgt
+from dgt.util import EngineStatus
+from utilities import Observable
 import logging
+import os
+import platform
 import spur
 import paramiko
 import chess.uci
+from chess import Board
 from threading import Timer
 import configparser
 
 
-def get_installed_engines(engine_shell, engine_file):
+def get_installed_engines(engine_shell, engine_file: str):
+    """create a library list."""
     return read_engine_ini(engine_shell, (engine_file.rsplit(os.sep, 1))[0])
 
 
 def read_engine_ini(engine_shell=None, engine_path=None):
+    """read engine.ini and creates a library list out of it."""
     config = configparser.ConfigParser()
     config.optionxform = str
     try:
@@ -49,10 +56,10 @@ def read_engine_ini(engine_shell=None, engine_path=None):
         parser.optionxform = str
         level_dict = {}
         if parser.read(engine_path + os.sep + section + '.uci'):
-            for ps in parser.sections():
-                level_dict[ps] = {}
-                for option in parser.options(ps):
-                    level_dict[ps][option] = parser[ps][option]
+            for p_section in parser.sections():
+                level_dict[p_section] = {}
+                for option in parser.options(p_section):
+                    level_dict[p_section][option] = parser[p_section][option]
 
         text = Dgt.DISPLAY_TEXT(l=config[section]['large'], m=config[section]['medium'], s=config[section]['small'],
                                 wait=True, beep=False, maxtime=0, devs={'ser', 'i2c', 'web'})
@@ -68,7 +75,19 @@ def read_engine_ini(engine_shell=None, engine_path=None):
 
 
 def write_engine_ini(engine_path=None):
-    def write_level_ini(engine_filename):
+    """read the engine folder and create the engine.ini file."""
+    def write_level_ini(engine_filename: str):
+        """write the level part for the engine.ini file."""
+        def calc_inc(diflevel: int):
+            """calculate the increment for (max 20) levels."""
+            if diflevel > 1000:
+                inc = int(diflevel / 100)
+            else:
+                inc = int(diflevel / 10)
+            if 20 * inc < diflevel:
+                inc = int(diflevel / 20)
+            return inc
+
         parser = configparser.ConfigParser()
         parser.optionxform = str
         if not parser.read(engine_path + os.sep + engine_filename + '.uci'):
@@ -76,29 +95,39 @@ def write_engine_ini(engine_path=None):
                 uelevel = engine.get().options['UCI_Elo']
                 elo_1, elo_2 = int(uelevel[2]), int(uelevel[3])
                 minlevel, maxlevel = min(elo_1, elo_2), max(elo_1, elo_2)
-                if maxlevel - minlevel > 1000:
-                    inc = int((maxlevel - minlevel) / 100)
-                else:
-                    inc = int((maxlevel - minlevel) / 10)
-                if 20 * inc + minlevel < maxlevel:
-                    inc = int((maxlevel - minlevel) / 20)
-                set_elo = minlevel
-                while set_elo < maxlevel:
-                    parser['Elo@{:04d}'.format(set_elo)] = {'UCI_LimitStrength' : 'true', 'UCI_Elo' : str(set_elo)}
-                    set_elo += inc
+                lvl_inc = calc_inc(maxlevel - minlevel)
+                level = minlevel
+                while level < maxlevel:
+                    parser['Elo@{:04d}'.format(level)] = {'UCI_LimitStrength' : 'true', 'UCI_Elo' : str(level)}
+                    level += lvl_inc
                 parser['Elo@{:04d}'.format(maxlevel)] = {'UCI_LimitStrength': 'false', 'UCI_Elo': str(maxlevel)}
             if engine.has_skill_level():
                 sklevel = engine.get().options['Skill Level']
                 minlevel, maxlevel = int(sklevel[3]), int(sklevel[4])
+                minlevel, maxlevel = min(minlevel, maxlevel), max(minlevel, maxlevel)
                 for level in range(minlevel, maxlevel+1):
                     parser['Level@{:02d}'.format(level)] = {'Skill Level': str(level)}
+            if engine.has_strength():
+                sklevel = engine.get().options['Strength']
+                minlevel, maxlevel = int(sklevel[3]), int(sklevel[4])
+                minlevel, maxlevel = min(minlevel, maxlevel), max(minlevel, maxlevel)
+                lvl_inc = calc_inc(maxlevel - minlevel)
+                level = minlevel
+                count = 0
+                while level < maxlevel:
+                    parser['Level@{:02d}'.format(count)] = {'Strength': str(level)}
+                    level += lvl_inc
+                    count += 1
+                parser['Level@{:02d}'.format(count)] = {'Strength': str(maxlevel)}
             with open(engine_path + os.sep + engine_filename + '.uci', 'w') as configfile:
                 parser.write(configfile)
 
-    def is_exe(fpath):
+    def is_exe(fpath: str):
+        """check if fpath is an executable."""
         return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
 
-    def name_build(parts, maxlength, default_name):
+    def name_build(parts: list, maxlength: int, default_name: str):
+        """get a (clever formed) cut name for the part list."""
         eng_name = ''
         for token in parts:
             if len(eng_name) + len(token) > maxlength:
@@ -127,12 +156,12 @@ def write_engine_ini(engine_path=None):
                     name_medium = name_build(name_parts, 8, name_small)
                     name_large = name_build(name_parts, 11, name_medium)
 
-                    config[engine_file_name] = {
-                        'name': engine_name,
-                        'small': name_small,
-                        'medium': name_medium,
-                        'large': name_large
-                    }
+                    config[engine_file_name] = {}
+                    config[engine_file_name]['name'] = engine_name
+                    config[engine_file_name]['small'] = name_small
+                    config[engine_file_name]['medium'] = name_medium
+                    config[engine_file_name]['large'] = name_large
+
                 except AttributeError:
                     pass
                 engine.quit()
@@ -141,6 +170,9 @@ def write_engine_ini(engine_path=None):
 
 
 class Informer(chess.uci.InfoHandler):
+
+    """internal uci engine info handler."""
+
     def __init__(self):
         super(Informer, self).__init__()
         self.allow_score = True
@@ -203,7 +235,10 @@ class Informer(chess.uci.InfoHandler):
 
 
 class UciEngine(object):
-    def __init__(self, file, hostname=None, username=None, key_file=None, password=None):
+
+    """handle the uci engine communication."""
+
+    def __init__(self, file: str, hostname=None, username=None, key_file=None, password=None, home=''):
         super(UciEngine, self).__init__()
         try:
             self.shell = None
@@ -216,7 +251,7 @@ class UciEngine(object):
                     shell = spur.SshShell(hostname=hostname, username=username, password=password,
                                           missing_host_key=paramiko.AutoAddPolicy())
                 self.shell = shell
-                self.engine = chess.uci.spur_spawn_engine(shell, [file])
+                self.engine = chess.uci.spur_spawn_engine(shell, [home + os.sep + file])
             else:
                 self.engine = chess.uci.popen_engine(file)
 
@@ -249,17 +284,20 @@ class UciEngine(object):
     def send(self):
         self.engine.setoption(self.options)
 
-    def level(self, options):
+    def level(self, options: dict):
         self.options = options
 
     def has_levels(self):
-        return self.level_support or self.has_skill_level() or self.has_limit_strength()
+        return self.level_support or self.has_skill_level() or self.has_limit_strength() or self.has_strength()
 
     def has_skill_level(self):
         return 'Skill Level' in self.engine.options
 
     def has_limit_strength(self):
         return 'UCI_LimitStrength' in self.engine.options
+
+    def has_strength(self):
+        return 'Strength' in self.engine.options
 
     def has_chess960(self):
         return 'UCI_Chess960' in self.engine.options
@@ -270,7 +308,7 @@ class UciEngine(object):
     def get_shell(self):
         return self.shell  # shell is only "not none" if its a local engine - see __init__
 
-    def position(self, game):
+    def position(self, game: Board):
         self.engine.position(game)
 
     def quit(self):
@@ -293,14 +331,14 @@ class UciEngine(object):
         self.engine.stop()
         return self.future.result()
 
-    def go(self, time_dict):
+    def go(self, time_dict: dict):
         if not self.is_waiting():
             logging.warning('engine (still) not waiting - strange!')
         self.status = EngineStatus.THINK
         self.show_best = True
         time_dict['async_callback'] = self.callback
 
-        DisplayMsg.show(Message.SEARCH_STARTED(engine_status=self.status))
+        Observable.fire(Event.START_SEARCH(engine_status=self.status))
         self.future = self.engine.go(**time_dict)
         return self.future
 
@@ -310,15 +348,16 @@ class UciEngine(object):
         self.status = EngineStatus.PONDER
         self.show_best = False
 
-        DisplayMsg.show(Message.SEARCH_STARTED(engine_status=self.status))
+        Observable.fire(Event.START_SEARCH(engine_status=self.status))
         self.future = self.engine.go(ponder=True, infinite=True, async_callback=self.callback)
         return self.future
 
     def callback(self, command):
         self.res = command.result()
-        DisplayMsg.show(Message.SEARCH_STOPPED(engine_status=self.status))
+
+        Observable.fire(Event.STOP_SEARCH(engine_status=self.status))
         if self.show_best:
-            Observable.fire(Event.BEST_MOVE(result=self.res, inbook=False))
+            Observable.fire(Event.BEST_MOVE(move=self.res.bestmove, ponder=self.res.ponder, inbook=False))
         else:
             logging.debug('event best_move not fired')
         self.status = EngineStatus.WAIT
@@ -332,7 +371,7 @@ class UciEngine(object):
     def is_waiting(self):
         return self.status == EngineStatus.WAIT
 
-    def startup(self, options, show=True):
+    def startup(self, options: dict, show=True):
         parser = configparser.ConfigParser()
         parser.optionxform = str
         if not options and parser.read(self.get_file() + '.uci'):
@@ -343,7 +382,7 @@ class UciEngine(object):
             pc_opts.update(options)
             options = pc_opts
 
-        logging.debug("setting engine with options {}".format(options))
+        logging.debug("setting engine with options %s", options)
         self.level(options)
         self.send()
         if show:

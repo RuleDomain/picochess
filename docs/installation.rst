@@ -6,9 +6,9 @@ Easy method : using image files
 
 This is the easiest installation method, supported on the `Raspberry Pi <http://www.raspberrypi.org>`_.
 Many other ARM boards can run picochess (like the powerful `Odroid-XU4 <http://www.hardkernel.com/main/products/prdt_info.php?g_code=G143452239825>`_),
-but you will need to do a :ref:`manual-install-label`.
+but you will need to do a `manual-install-label`_.
 
-You will have to download and install the latest PicoChess image file from the `PicoChess downloads <http://dl.picochess.org>`_ and write it
+You will have to download and install the latest PicoChess image file from the `PicoChess downloads <http://picochess.com/picochess-images>`_ and write it
 to an SD card or to a micro SD card.
 
 You will need to unzip the image with `7zip <http://www.7-zip.org/>`_ and write it to a suitable SD card
@@ -96,10 +96,8 @@ Manual installation
 
 1. **Prerequisites**
 
-  PicoChess is mainly targetted for small devices like the
-  `Raspberry Pi <http://www.raspberrypi.org>`_, however it also
-  runs on a desktop computer (Linux, Mac OS X, Windows). You will need to install this
-  first:
+  PicoChess is mainly targetted for small devices like the `Raspberry Pi <http://www.raspberrypi.org>`_,
+  however it also runs on a desktop computer (Linux, Mac OS X, Windows). You will need to install this first:
 
   * `Python 3.4 or newer (also comes with pip) <https://www.python.org/downloads/>`_
     (on Mac OS X, ``brew install python3``)
@@ -108,9 +106,13 @@ Manual installation
 
   * zeroconf (``sudo apt-get install avahi-daemon avahi-discover libnss-mdns``, included on Mac OS X)
 
-  * espeak and festival (``sudo apt-get install espeak festival``) to enable speech for versions < 0.79
+  * espeak and festival (``sudo apt-get install espeak festival``) to enable voice for versions < 0.79
 
-  * vorbis-tools (``sudo apt-get install vorbis-tools``) to enable speech for versions >= 0.79
+  * vorbis-tools (``sudo apt-get install vorbis-tools``) to enable voice for versions >= 0.79
+
+  * sox (``sudo apt-get install sox``) to enable voice speed for versions >= 0.88
+
+  * develop libraries (``sudo apt-get install python3-dev libffi-dev libssl-dev``)
 
 2. **Get a copy of the source code**
 
@@ -137,7 +139,8 @@ Manual installation
 
 4. **Install dependencies**
 
-  To install the dependencies, you need to use pip3. If you are using Raspbian Jessie, your pip3 installation is probably outdated, resulting in IncompleteRead errors. You can update pip3 as follows:
+  To install the dependencies, you need to use pip3. If you are using Raspbian Jessie, your pip3 installation is
+  probably outdated, resulting in IncompleteRead errors. You can update pip3 as follows:
   
   ``cd``
   
@@ -153,29 +156,50 @@ Manual installation
 
   ``sudo pip3 install --upgrade -r requirements.txt``
 
-5. **UCI config files**
+5. **Build config files**
 
-  Initialize the engines' UCI settings via .uci files:
+  Initialize the config files:
 
   ``sudo python3 ./build_engines.py``
+  ``sudo python3 ./build_books.py``
+  ``sudo python3 ./build_voices.py``
 
-6. **Copy the services into the correct place**
+6. **Copy the dgtpi services into the correct place (ONLY needed if you have a DGTPi chess computer)**
 
-``cd /opt/picochess/dgt``
+  ``cd /opt/picochess/etc``
 
-``sudo cp picochess.service /etc/systemd/system``
+  ``sudo cp dgtpi.service /etc/systemd/system``
 
-``sudo chmod a+x /etc/systemd/system/picochess.service``
+  ``sudo chmod a+x /etc/systemd/system/dgtpi.service``
 
-``sudo systemctl enable picochess``
+  ``sudo systemctl enable dgtpi``
 
-``sudo cp hciuart.service /lib/systemd/system``
+  ``sudo cp dgtpistandby.service /etc/systemd/system``
 
-``sudo reboot``
+  ``sudo cp dgtpistandby.target /etc/systemd/system``
 
-7. **Run PicoChess: automatically or from the command line**
+  ``sudo chmod a+x /etc/systemd/system/dgtpistandby.service``
 
-  If installed correctly, PicoChess will start automatically at boot (as a service). You can also start PicoChess from the command line.
+  ``sudo systemctl enable dgtpistandby``
+
+7. **Copy the picochess services into the correct place (ONLY needed if you want picochess to startup automatically)**
+
+  ``cd /opt/picochess/etc``
+
+  ``sudo cp picochess.service /etc/systemd/system``
+
+  ``sudo chmod a+x /etc/systemd/system/picochess.service``
+
+  ``sudo systemctl enable picochess``
+
+  ``sudo cp hciuart.service /lib/systemd/system``
+
+  ``sudo reboot``
+
+8. **Run PicoChess: automatically or from the command line**
+
+  If installed correctly, PicoChess will start automatically at boot (as a service see 6+7).
+  You can also start PicoChess from the command line in standard mode or in console mode (use "console" flag for this).
 
   PicoChess has a lot of options. Type ``sudo python3 /opt/picochess/picochess.py -h`` for a list.
 
@@ -219,29 +243,30 @@ At start PicoChess looks at the file
 
 ... and sets itself up accordingly. Here is a list of some available options:
 
-* enable-revelation-leds = true
+* disable-revelation-leds = true
 * log-level = debug
 * log-file = /opt/picochess/picochess.log
-* user-voice = en:Elsie
-* computer-voice = en:Marvin
-* disable-ok-message
+* user-voice = en:al
+* computer-voice = en:christina
+* disable-confirm-message
 
 To set a particular setting, simply include the appropriate line in the picochess.ini file.
 For example, to the disable default confirmation message, include this line in picochess.ini:
 
-disable-ok-message
+disable-confirm-message
 
 To remove a setting, delete the appropriate line or comment it out using the hash character (#) or set the option to false.
 For example, to turn OFF the LED's on the Revelation II chessbot, this line will do:
 
-enable-revelation-leds = false
+disable-revelation-leds = true
 
-UCI engine options can be set in the engines.uci configuration file which you will find in the /opt/picochess/engines/<your_plattform> folder. To set the option, use the uci-option flag.
+UCI engine options can be set in the engines.uci configuration file which you will find in the
+/opt/picochess/engines/<your_plattform> folder. To set the option, use the uci-option flag.
 
 An example .ini file can be found at /opt/picochess/picochess.ini.example.
 Uncomment the appropriate options and rename the file to picochess.ini.
 
 Please keep in mind that your picochess.ini file must suit the version of picochess.
 Old picochess.ini versions might not work with newer versions of picochess (picochess.ini.example is always valid).
-If you update picochess by hand or by providing the "inet" flag please take a look for changed settings and update
-picochess.ini accordingly.
+If you update picochess by hand or by providing the "enable-update" flag please take a look for changed settings and
+update picochess.ini accordingly.
